@@ -24,13 +24,19 @@ class Decoder(nn.Module):
         self.blocks = nn.ModuleList()
 
         # Create to_rgb layers and blocks for each resolution
-        for cfg in self.config:
+        for i, cfg in enumerate(self.config):
             self.to_rgb_layers.append(
                 nn.Conv2d(
                     in_channels=cfg["channels"] // 2, out_channels=3, kernel_size=1
                 )
             )
-            self.blocks.append(self._create_block(cfg["channels"], upscale=True))
+            self.blocks.append(
+                self._create_block(
+                    cfg["channels"],
+                    upscale=True,
+                    last_block=(i == len(self.config) - 1),
+                )
+            )
 
         self.first_block_resolution = self.config[0]["resolution"] // 2
         self.fcl_output_dim = (
@@ -43,7 +49,9 @@ class Decoder(nn.Module):
         self.alpha = 1.0
         self.level = 0
 
-    def _create_block(self, channels: int, upscale: bool = True):
+    def _create_block(
+        self, channels: int, upscale: bool = True, last_block: bool = False
+    ):
         """
         Create a block of layers for a given number of channels.
 
@@ -53,6 +61,8 @@ class Decoder(nn.Module):
             The number of channels in the input.
         upscale : bool
             Whether to add an upsampling layer at the start of the block.
+        last_block : bool
+            Whether this is the last block in the network.
         """
         # Create and return a block of layers for a given number of channels
         block = nn.Sequential(
@@ -73,10 +83,12 @@ class Decoder(nn.Module):
                 padding=1,
             ),
             nn.BatchNorm2d(channels // 2),
-            nn.LeakyReLU(0.2),
         )
+        if last_block:
+            block.add_module("tanh", nn.Tanh())
+        else:
+            block.add_module("leaky_relu", nn.LeakyReLU(0.2))
         if upscale:
-            # Add upsampling at the start of the block
             block = nn.Sequential(nn.Upsample(scale_factor=2, mode="nearest"), block)
         return block
 

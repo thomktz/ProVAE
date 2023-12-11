@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from .encoder import Encoder
 from .decoder import Decoder
 
@@ -15,15 +16,12 @@ class ProVAE(nn.Module):
         The dimensionality of the latent space.
     config : list of dicts
         The configuration for the progressive growing.
-    device : str
-        The device to run the model on.
     """
 
-    def __init__(self, latent_dim, config, device):
+    def __init__(self, latent_dim, config):
         super().__init__()
         self.latent_dim = latent_dim
         self.config = config
-        self.device = device
 
         self.encoder = Encoder(config, latent_dim)
         self.decoder = Decoder(config, latent_dim)
@@ -43,6 +41,35 @@ class ProVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
+    def loss_function(self, recons, input_, mu, logvar, kld_weight) -> dict:
+        """
+        Compute the VAE loss function.
+
+        Parameters
+        ----------
+        recons : torch.Tensor
+            The reconstructed image.
+        input_ : torch.Tensor
+            The input image.
+        mu : torch.Tensor
+            The mean of the distribution.
+        logvar : torch.Tensor
+            The log variance of the distribution.
+        kld_weight : float
+            The weight of the KL divergence term.
+        """
+        recons_loss = F.mse_loss(recons, input_)
+        kld_loss = torch.mean(
+            -0.5 * torch.sum(1 + logvar - mu**2 - logvar.exp(), dim=1), dim=0
+        )
+
+        loss = recons_loss + kld_weight * kld_loss
+        return {
+            "loss": loss,
+            "Reconstruction_Loss": recons_loss.detach(),
+            "KLD": -kld_loss.detach(),
+        }
+
     def forward(self, x):
         """Forward pass through the encoder and decoder."""
         mu, logvar = self.encoder(x)
@@ -52,6 +79,7 @@ class ProVAE(nn.Module):
     def _train_init(self, learning_rate):
         self.criterion = nn.MSELoss()  # or any other loss function
         self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
 
     def _train_one_epoch(self, dataloader, epoch_index):
